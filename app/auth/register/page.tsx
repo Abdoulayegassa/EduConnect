@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase/browser';
+import type { TutorMode } from '@/lib/profile/sanitize';
 
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -41,9 +42,6 @@ const PODS: Pod[] = ['morning','afternoon','evening'];
 const keyFor = (day: Day, pod: Pod) => `${day}:${pod}`;
 
 type Role = 'student' | 'tutor';
-type TutorMode = 'visio' | 'presentiel';
-
-
 interface FormData {
   firstName: string;
   lastName: string;
