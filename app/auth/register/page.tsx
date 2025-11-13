@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase/browser';
+import type { TutorMode } from '@/lib/profile/sanitize';
 
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -41,8 +42,6 @@ const PODS: Pod[] = ['morning','afternoon','evening'];
 const keyFor = (day: Day, pod: Pod) => `${day}:${pod}`;
 
 type Role = 'student' | 'tutor';
-
-
 interface FormData {
   firstName: string;
   lastName: string;
@@ -86,7 +85,8 @@ export default function RegisterPage() {
     degree: '',
     subjects: [],
     availabilityKeys: [],
-     modesVisio: true,
+    experience: '',
+    modesVisio: true,
     modesPresentiel: false,
   });
 
@@ -138,19 +138,18 @@ export default function RegisterPage() {
       const full_name = `${formData.firstName} ${formData.lastName}`.trim();
 
       // --- Mapping tutor modes
-     let modes: string[] | null = null;
-if (!isStudent) {
-  const out: string[] = [];
-  if (formData.modesVisio) out.push('visio');
-  if (formData.modesPresentiel) out.push('presentiel');
-  if (out.length === 0) {
-    setErr('Sélectionnez au moins un format (Visio ou Présentiel).');
-    setLoading(false);
-    return;
-  }
-  modes = out;
-}
-
+      let modes: TutorMode[] | null = null;
+      if (!isStudent) {
+        const out: TutorMode[] = [];
+        if (formData.modesVisio) out.push('visio');
+        if (formData.modesPresentiel) out.push('presentiel');
+        if (out.length === 0) {
+          setErr('Sélectionnez au moins un format (Visio ou Présentiel).');
+          setLoading(false);
+          return;
+        }
+        modes = out;
+      }
 
       // --- subject_slugs
       const subjectsArr = isStudent ? [] : (formData.subjects ?? []);
@@ -197,7 +196,7 @@ if (!isStudent) {
         subject_slugs: !isStudent ? subject_slugs : [],
         availability_codes: !isStudent ? availability_codes : null, // << clé de cohérence
         modes: !isStudent ? modes : null,
-        // experience: !isStudent ? (formData.experience ?? null) : null,
+        experience: !isStudent ? (formData.experience ?? null) : null,
         // availability: availability_legacy, // si tu as conservé la colonne legacy
       };
 
