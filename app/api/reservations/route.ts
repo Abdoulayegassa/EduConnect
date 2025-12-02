@@ -203,7 +203,7 @@ export async function POST(req: Request) {
       .select("id, starts_at, ends_at, mode, jitsi_link")
       .maybeSingle();
 
-    let sessionRow = sess;
+        let sessionRow = sess;
 
     if (!sessionRow && eSess) {
       const { data: existingSession } = await supa
@@ -229,8 +229,11 @@ export async function POST(req: Request) {
       );
     }
 
+    // ✅ À partir de là, TypeScript sait qu’elle n’est plus nulle
+    const session = sessionRow;
+
     // 6) Consommer la disponibilité du tuteur pour ce slot
-    try {
+     try {
       const del1 = await supa
         .from("tutor_availabilities")
         .delete()
@@ -272,17 +275,20 @@ export async function POST(req: Request) {
       fullName?.split(" ")[0] || "Bonjour";
 
     const htmlTemplate = (role: "Étudiant" | "Tuteur") => `
-      <p>${role === "Étudiant" ? "Bonjour" : "Bonjour"} ${role === "Étudiant"
-      ? formatName(studentProfile?.full_name)
-      : formatName(tutorProfile?.full_name)
+      <p>${role === "Étudiant" ? "Bonjour" : "Bonjour"} ${
+      role === "Étudiant"
+        ? formatName(studentProfile?.full_name)
+        : formatName(tutorProfile?.full_name)
     },</p>
       <p>Votre session de soutien en <b>${subjectLabel}</b> vient d’être programmée.</p>
-      <p><b>Date et heure :</b> ${sessionRow.starts_at}</p>
+      <p><b>Date et heure :</b> ${session.starts_at}</p>
       <p><b>Durée :</b> 2 heures</p>
-      <p><b>Mode :</b> ${sessionRow.mode === "presentiel" ? "Présentiel" : "Visio"}</p>
+      <p><b>Mode :</b> ${
+        session.mode === "presentiel" ? "Présentiel" : "Visio"
+      }</p>
       ${
-        sessionRow.jitsi_link
-          ? `<p><b>Lien de connexion :</b> <a href="${sessionRow.jitsi_link}">${sessionRow.jitsi_link}</a></p>`
+        session.jitsi_link
+          ? `<p><b>Lien de connexion :</b> <a href="${session.jitsi_link}">${session.jitsi_link}</a></p>`
           : ""
       }
       <p>Merci d’être ponctuel(le) et de vous connecter quelques minutes à l’avance.</p>
@@ -314,10 +320,10 @@ export async function POST(req: Request) {
         kind: "session_created_student",
         delivered: true, // email déjà envoyé
         payload: {
-          session_id: sessionRow.id,
+          session_id: session.id,
           subject: subjectLabel,
-          starts_at: sessionRow.starts_at,
-          jitsi_link: sessionRow.jitsi_link,
+          starts_at: session.starts_at,
+          jitsi_link: session.jitsi_link,
         },
         meta: {
           source: "reservations",
@@ -330,10 +336,10 @@ export async function POST(req: Request) {
         kind: "session_created_tutor",
         delivered: true,
         payload: {
-          session_id: sessionRow.id,
+          session_id: session.id,
           subject: subjectLabel,
-          starts_at: sessionRow.starts_at,
-          jitsi_link: sessionRow.jitsi_link,
+          starts_at: session.starts_at,
+          jitsi_link: session.jitsi_link,
         },
         meta: {
           source: "reservations",
@@ -347,10 +353,12 @@ export async function POST(req: Request) {
       {
         success: true,
         matchId: matchRow.id,
-        session: sessionRow,
+        session,
       },
       { status: 200 }
     );
+
+    
   } catch (e: any) {
     console.error("reservations POST error", e);
     return NextResponse.json(
