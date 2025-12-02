@@ -1,71 +1,84 @@
-// components/dashboard/Topbar.tsx
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { BookOpen } from 'lucide-react';
+import { useMemo } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { BookOpen, LogOut } from 'lucide-react';
+import { supabaseBrowser } from '@/lib/supabase/browser';
 import { Button } from '@/components/ui/button';
 
 type TopbarProps = {
   fullName?: string;
 };
 
-function getInitials(name?: string | null) {
-  if (!name) return '??';
+function initials(name?: string | null) {
+  if (!name) return 'EC';
   const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] ?? '';
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
-  return (first + last).toUpperCase();
+  return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase();
 }
 
 export default function Topbar({ fullName }: TopbarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const supa = useMemo(() => supabaseBrowser(), []);
 
   const isStudent = pathname?.startsWith('/dashboard/student');
   const isTutor = pathname?.startsWith('/dashboard/tutor');
 
+  const handleLogout = async () => {
+    try {
+      await supa.auth.signOut();
+      // redirection vers la page de login
+      router.replace('/auth/login');
+    } catch (e) {
+      console.error('logout error', e);
+    }
+  };
+
   return (
     <header className="border-b bg-white/80 backdrop-blur-sm">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
-        {/* Logo BookOpen + EduConnect */}
+        {/* Logo (BookOpen + EduConnect) */}
         <Link href="/" className="flex items-center gap-2">
-          <BookOpen className="h-7 w-7 text-blue-600" />
-          <span className="text-lg sm:text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <BookOpen className="h-6 w-6 text-blue-600" />
+          <span className="text-base sm:text-lg font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             EduConnect
           </span>
         </Link>
 
         <div className="flex items-center gap-4">
-          {/* Badge rôle (comme avant) */}
+          {/* Badge rôle */}
           {isStudent && (
-            <span className="hidden sm:inline text-xs sm:text-sm px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+            <span className="text-xs sm:text-sm px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
               Espace étudiant
             </span>
           )}
           {isTutor && (
-            <span className="hidden sm:inline text-xs sm:text-sm px-2 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-100">
+            <span className="text-xs sm:text-sm px-2 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-100">
               Espace tuteur
             </span>
           )}
 
-          {/* Nom + initiales utilisateur */}
+          {/* Avatar (initiales) = lien vers /profile */}
           {fullName && (
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-semibold">
-                {getInitials(fullName)}
-              </div>
-              <span className="hidden sm:inline text-sm text-gray-700">
-                {fullName}
-              </span>
-            </div>
+            <Link
+              href="/profile"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-500 text-white text-xs font-semibold shadow-sm hover:opacity-90 transition"
+              title="Voir mon profil"
+            >
+              {initials(fullName)}
+            </Link>
           )}
 
-          {/* Exemple de bouton profil si tu veux (optionnel) */}
-          {/* <Link href="/profile">
-            <Button variant="outline" size="sm">
-              Mon profil
-            </Button>
-          </Link> */}
+          {/* Bouton déconnexion */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleLogout}
+            title="Se déconnecter"
+          >
+            <LogOut className="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </header>
