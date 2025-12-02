@@ -2,40 +2,80 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+type RouteParams = {
+  params: {
+    id: string; // vient de [id] dans le dossier
+  };
+};
+
+export async function POST(req: Request, { params }: RouteParams) {
   try {
     const matchId = params.id;
 
-    // UUID v4 simple check
     if (!matchId || !/^[0-9a-f-]{36}$/i.test(matchId)) {
-      return NextResponse.json({ error: 'match_id invalide' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'match_id invalide' },
+        { status: 400 },
+      );
     }
 
-    const supabase = supabaseServer();
-    const { data: { user } } = await supabase.auth.getUser();
+    const supa = supabaseServer();
+
+    const {
+      data: { user },
+      error: authErr,
+    } = await supa.auth.getUser();
+
+    if (authErr) {
+      console.error('auth.getUser error', authErr);
+    }
+
     if (!user) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Non authentifié' },
+        { status: 401 },
+      );
     }
 
-    // Option A (recommandé) : RPC SQL (si créée)
-    // const { error } = await supabase.rpc('decline_match', { p_match_id: matchId });
-
-    // Option B : UPDATE direct (RLS fera le contrôle tuteur/étudiant)
-    const { error } = await supabase
+    // On ne décline que si :
+    // - le match est encore 'proposed'
+    // - et appartient bien au tuteur connecté
+    const { data, error } = await supa
       .from('matches')
-      .update({ status: 'declined' })
+      .update({
+        status: 'declined',
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', matchId)
-      .eq('status', 'proposed'); // évite de "décliner" un accepted
+      .eq('tutor_id', user.id)
+      .eq('status', 'proposed')
+      .select('id, status, request_id, tutor_id')
+      .maybeSingle();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      console.error('matches UPDATE decline error', error);
+      return NextResponse.json(
+        { error: error.message },
+        { status: 400 },
+      );
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    if (!data) {
+      return NextResponse.json(
+        { error: 'Match introuvable ou déjà traité' },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json(
+      { success: true, match: data },
+      { status: 200 },
+    );
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Erreur serveur' }, { status: 500 });
+    console.error('decline match exception', e);
+    return NextResponse.json(
+      { error: e?.message ?? 'Erreur serveur' },
+      { status: 500 },
+    );
   }
 }

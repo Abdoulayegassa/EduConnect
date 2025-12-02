@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { supabaseServer } from '@/lib/supabase/server';
 
 const BodySchema = z.object({
+  // Optionnels : l’élève peut préciser la date/heure exacte et la durée
   startsAt: z.string().datetime().optional(),       // ISO8601
   durationMin: z.number().int().positive().max(480).optional(),
 });
@@ -12,17 +13,15 @@ function isUUID(s?: string) {
   return !!s && /^[0-9a-f-]{36}$/i.test(s);
 }
 
-// === helpers (day/pod/slot_code) ===
 const DAY_CODES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-type DayCode = typeof DAY_CODES[number];
+type DayCode = (typeof DAY_CODES)[number];
 type Pod = 'morning' | 'afternoon' | 'evening';
 
 function toDayCode(d: Date): DayCode {
-  return DAY_CODES[d.getDay()]; // JS: 0=Sunday..6=Saturday
+  return DAY_CODES[d.getDay()];
 }
 function toPod(d: Date): Pod {
   const h = d.getHours();
-  // même logique UI : matin (8–12), aprem (12–18), soir (18–22)
   if (h >= 18) return 'evening';
   if (h >= 12) return 'afternoon';
   return 'morning';
@@ -33,52 +32,102 @@ function toSlotCode(d: Date) {
   return { day, pod, slot_code: `${day}:${pod}` };
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const matchId = params?.id;
     if (!isUUID(matchId)) {
-      return NextResponse.json({ success: false, error: 'match_id invalide' }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: 'MATCH_ID_INVALID' },
+        { status: 400 },
+      );
     }
 
     const supa = supabaseServer();
 
-    // Auth
-    const { data: { user } } = await supa.auth.getUser();
+    // 0) Auth
+    const {
+      data: { user },
+      error: authErr,
+    } = await supa.auth.getUser();
+
+    if (authErr) {
+      return NextResponse.json(
+        { success: false, error: authErr.message },
+        { status: 500 },
+      );
+    }
     if (!user) {
-      return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 });
+      return NextResponse.json(
+        { success: false, error: 'UNAUTHENTICATED' },
+        { status: 401 },
+      );
     }
 
-    const json = await (async () => { try { return await req.json(); } catch { return {}; } })();
+    // 1) Body (facultatif)
+    const json = await (async () => {
+      try {
+        return await req.json();
+      } catch {
+        return {};
+      }
+    })();
     const body = BodySchema.parse(json || {});
 
-    // 1) Charger le match + vérifier l’auteur (élève)
+    // 2) Charger le match + la request (pour vérifier que c’est BIEN l’élève)
     const { data: m, error: eMatch } = await supa
       .from('matches')
-      .select(`
+      .select(
+        `
         id, status, tutor_id, request_id,
         request:requests!inner ( id, student_id, mode )
-      `)
+      `,
+      )
       .eq('id', matchId)
       .maybeSingle();
 
-    if (eMatch) return NextResponse.json({ success: false, error: eMatch.message }, { status: 400 });
-    if (!m) return NextResponse.json({ success: false, error: 'MATCH_NOT_FOUND' }, { status: 404 });
+    if (eMatch) {
+      return NextResponse.json(
+        { success: false, error: eMatch.message },
+        { status: 400 },
+      );
+    }
+    if (!m) {
+      return NextResponse.json(
+        { success: false, error: 'MATCH_NOT_FOUND' },
+        { status: 404 },
+      );
+    }
 
-    const reqRow: any = Array.isArray((m as any).request) ? (m as any).request[0] : (m as any).request;
-    if (reqRow?.student_id !== user.id) {
-      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 });
-    }
-    if (m.status === 'accepted') {
-      return NextResponse.json({ success: true, warning: 'ALREADY_ACCEPTED' }, { status: 200 });
-    }
-    if (m.status !== 'proposed') {
-      return NextResponse.json({ success: false, error: 'INVALID_STATE' }, { status: 409 });
+    const matchRow: any = m;
+    const reqRow: any = Array.isArray(matchRow.request)
+      ? matchRow.request[0]
+      : matchRow.request;
+
+    // ✅ Vérifier que c’est bien l’ÉLÈVE qui accepte
+    if (!reqRow?.student_id || reqRow.student_id !== user.id) {
+      return NextResponse.json(
+        { success: false, error: 'FORBIDDEN_NOT_STUDENT' },
+        { status: 403 },
+      );
     }
 
-    // 2) Acceptation atomique
+    // ✅ États autorisés
+    if (matchRow.status === 'accepted') {
+      // Idempotent : déjà accepté → on renvoie OK
+      return NextResponse.json(
+        { success: true, warning: 'ALREADY_ACCEPTED' },
+        { status: 200 },
+      );
+    }
+
+    if (matchRow.status !== 'proposed') {
+      return NextResponse.json(
+        { success: false, error: 'INVALID_STATE' },
+        { status: 409 },
+      );
+    }
+
+    // 3) Accepter le match de façon atomique
     const { data: upd, error: eUpd } = await supa
       .from('matches')
       .update({ status: 'accepted' })
@@ -87,75 +136,102 @@ export async function POST(
       .select('id, request_id, tutor_id')
       .maybeSingle();
 
-    if (eUpd) return NextResponse.json({ success: false, error: eUpd.message }, { status: 400 });
-    if (!upd) return NextResponse.json({ success: false, error: 'CONFLICT_ALREADY_ACCEPTED' }, { status: 409 });
+    if (eUpd) {
+      return NextResponse.json(
+        { success: false, error: eUpd.message },
+        { status: 400 },
+      );
+    }
+    if (!upd) {
+      // quelqu’un a déjà modifié le match
+      return NextResponse.json(
+        { success: false, error: 'CONFLICT_ALREADY_ACCEPTED_OR_CHANGED' },
+        { status: 409 },
+      );
+    }
 
-    // 3) Créer la session (par défaut: +1h)
+    // 4) Vérifier s’il existe déjà une session pour ce match
+    const { data: existingSession, error: eExisting } = await supa
+      .from('sessions')
+      .select('id, starts_at, ends_at, jitsi_link')
+      .eq('match_id', upd.id)
+      .maybeSingle();
+
+    if (eExisting) {
+      // on logue mais on ne bloque pas forcément, sauf gros souci
+      console.warn('Error checking existing session:', eExisting);
+    }
+
+    if (existingSession) {
+      // Session déjà créée (par un autre flux) → on renvoie tel quel
+      return NextResponse.json(
+        { success: true, session: existingSession },
+        { status: 200 },
+      );
+    }
+
+    // 5) Créer la session maintenant (cas standard : aucune session encore)
     const startsAt = body.startsAt
       ? new Date(body.startsAt)
-      : new Date(Date.now() + 60 * 60 * 1000);
-    const durationMin = body.durationMin ?? 60;
+      : new Date(Date.now() + 60 * 60 * 1000); // par défaut +1h
 
-    const jitsi_link = `https://meet.jit.si/edu-${upd.id.slice(0, 8)}-${Date.now().toString(36)}`;
+    const durationMin = body.durationMin ?? 60;
+    const endsAt = new Date(startsAt.getTime() + durationMin * 60 * 1000);
+
+    const jitsi_link = `https://meet.jit.si/edu-${upd.id.slice(
+      0,
+      8,
+    )}-${Date.now().toString(36)}`;
+    const { slot_code } = toSlotCode(startsAt);
+
+    // mode de la demande (fallback visio par sécurité)
+    const sessionMode =
+      reqRow?.mode === 'visio' || reqRow?.mode === 'presentiel'
+        ? reqRow.mode
+        : 'visio';
 
     const { data: sess, error: eSess } = await supa
       .from('sessions')
       .insert({
         request_id: upd.request_id,
         match_id: upd.id,
+        student_id: reqRow.student_id,
+        tutor_id: upd.tutor_id,
         starts_at: startsAt.toISOString(),
-        mode: reqRow?.mode ?? 'visio',
+        ends_at: endsAt.toISOString(),
+        mode: sessionMode,
+        slot_code,
         jitsi_link,
-        // ⚠️ décommente seulement si ta colonne existe :
-        // duration_min: durationMin as any,
       } as any)
-      .select('id, starts_at, jitsi_link')
-      .single();
+      .select('id, starts_at, ends_at, jitsi_link')
+      .maybeSingle();
 
-    const sessionRow =
-      sess ??
-      (await (async () => {
-        if (!eSess) return null;
-        const { data: existing } = await supa
-          .from('sessions')
-          .select('id, starts_at, jitsi_link')
-          .eq('match_id', upd.id)
-          .maybeSingle();
-        return existing ?? null;
-      })());
-
-    if (!sessionRow && eSess) {
-      return NextResponse.json({ success: false, error: eSess.message }, { status: 400 });
+    if (eSess) {
+      return NextResponse.json(
+        { success: false, error: eSess.message },
+        { status: 400 },
+      );
+    }
+    if (!sess) {
+      return NextResponse.json(
+        { success: false, error: 'SESSION_INSERT_FAILED' },
+        { status: 500 },
+      );
     }
 
-    // 4) Consommer la disponibilité du tuteur (SUPPRESSION dans tutor_availabilities)
-    try {
-      const { day, pod, slot_code } = toSlotCode(startsAt);
+    // NB : on NE gère PAS ici la suppression des disponibilités,
+    // c’est le trigger fn_consume_avail_on_session() qui s’en charge
+    // via trg_consume_avail_on_session AFTER INSERT ON sessions.
 
-      // 4a. via slot_code
-      const del1 = await supa
-        .from('tutor_availabilities')
-        .delete()
-        .match({ tutor_id: upd.tutor_id, slot_code })
-        .select('tutor_id'); // pour pouvoir compter
-
-      const deleted1 = Array.isArray(del1.data) ? del1.data.length : 0;
-
-      // 4b. fallback via (day, pod) si rien supprimé
-      if (deleted1 === 0) {
-        await supa
-          .from('tutor_availabilities')
-          .delete()
-          .match({ tutor_id: upd.tutor_id, day, pod })
-          .select('tutor_id');
-      }
-    } catch (e) {
-      // non bloquant
-      console.warn('consume tutor availability warning:', e);
-    }
-
-    return NextResponse.json({ success: true, session: sessionRow }, { status: 200 });
+    return NextResponse.json(
+      { success: true, session: sess },
+      { status: 200 },
+    );
   } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || 'SERVER_ERROR' }, { status: 500 });
+    console.error('MATCH_ACCEPT_ERROR', e);
+    return NextResponse.json(
+      { success: false, error: e?.message || 'SERVER_ERROR' },
+      { status: 500 },
+    );
   }
 }

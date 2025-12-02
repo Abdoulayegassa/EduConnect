@@ -1,59 +1,139 @@
+// hooks/useInstantMatch.ts
+"use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { InstantTutor } from "@/lib/matching/types";
 
-export type Mode = "visio" | "presentiel";
-
-export type InstantMatchQuery = {
-  subject?: string;
-  mode?: Mode;
-  slotCodes?: string[]; // ex: ["wed:evening", "sun:morning"]
+type UseInstantMatchInput = {
+  subject: string;
+  mode?: string;         // gardé pour compatibilité, mais visio-only
+  slotCodes?: string[];  // ex: ["wed:evening", "sun:morning"]
+  debounceMs?: number;
 };
 
-export type InstantTutor = {
-  id: string;
-  full_name: string | null;
-  subjects: string[] | null;
-  hourly_rate?: number | null;
-  rating?: number | null;
-  reviews_count?: number | null;
-  next_availabilities?: string[] | null; // ISO[]
+type UseInstantMatchState = {
+  loading: boolean;
+  data: InstantTutor[] | null;
+  error: string | null;
 };
 
-const debounce = (fn: (...a:any[])=>void, ms=280) => {
-  let t:any; return (...a:any[]) => { clearTimeout(t); t=setTimeout(()=>fn(...a), ms); };
-};
+// Cache temporaire en mémoire (10s)
+const CACHE_TTL_MS = 10_000;
+const matchCache = new Map<
+  string,
+  { data: InstantTutor[]; ts: number }
+>();
 
-export function useInstantMatch(q: InstantMatchQuery) {
+export function useInstantMatch({
+  subject,
+  mode = "visio",
+  slotCodes = [],
+  debounceMs = 300,
+}: UseInstantMatchInput): UseInstantMatchState {
   const [loading, setLoading] = useState(false);
-  const [data, setData]     = useState<InstantTutor[]>([]);
-  const [error, setError]   = useState<string|null>(null);
-  const lastQS = useRef("");
+  const [data, setData] = useState<InstantTutor[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const run = useMemo(() => debounce(async (payload: InstantMatchQuery) => {
-    const subject   = (payload.subject || "").trim();
-    const mode      = payload.mode || "";
-    const slotCodes = (payload.slotCodes || []).join(",");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFetchIdRef = useRef(0);
 
-    if (!subject && !mode && !slotCodes) { setData([]); return; }
+  const stableParams = useMemo(() => {
+    const trimmed = (subject || "").trim();
+    const normalizedSlots = [...slotCodes].sort();
 
-    const qs = new URLSearchParams({ subject, mode, slots: slotCodes }).toString();
-    lastQS.current = qs;
-    setLoading(true); setError(null);
-    try {
-      const res = await fetch(`/api/match?${qs}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const j = await res.json();
-      setData(Array.isArray(j?.tutors) ? j.tutors : []);
-    } catch (e:any) {
-      setError(e?.message || "MATCH_ERROR");
-    } finally {
-      setLoading(false);
-    }
-  }, 280), []);
+    return {
+      subject: trimmed,
+      mode,
+      normalizedSlots,
+      cacheKey: JSON.stringify({
+        s: trimmed,
+        m: mode,
+        slots: normalizedSlots,
+      }),
+    };
+  }, [subject, mode, slotCodes]);
 
   useEffect(() => {
-    run(q);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.subject, q.mode, JSON.stringify(q.slotCodes)]);
+    const { subject, mode, normalizedSlots, cacheKey } = stableParams;
 
-  return { loading, data, error } as const;
+    // Nettoyage timer quand les params changent
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    // Pas de sujet → pas d'appel API
+    if (!subject) {
+      setLoading(false);
+      setData((prev) => (prev === null ? [] : prev));
+      setError(null);
+      return;
+    }
+
+    // Check cache
+    const now = Date.now();
+    const cached = matchCache.get(cacheKey);
+
+    if (cached && now - cached.ts < CACHE_TTL_MS) {
+      setLoading(false);
+      setData(cached.data);
+      setError(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    const fetchId = ++lastFetchIdRef.current;
+
+    timerRef.current = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set("subject", subject);
+        if (mode) params.set("mode", mode);
+        if (normalizedSlots.length > 0) {
+          params.set("slots", normalizedSlots.join(","));
+        }
+
+        const res = await fetch(`/api/match?${params.toString()}`);
+
+        let json: any = {};
+        try {
+          json = await res.json();
+        } catch {}
+
+        if (fetchId !== lastFetchIdRef.current) return;
+
+        if (!res.ok) {
+          const msg = json?.error || json?.warn || `HTTP ${res.status}`;
+          setError(msg);
+          setData([]);
+          setLoading(false);
+          return;
+        }
+
+        const tutors = Array.isArray(json.tutors)
+          ? (json.tutors as InstantTutor[])
+          : [];
+
+        matchCache.set(cacheKey, { data: tutors, ts: Date.now() });
+
+        setData(tutors);
+        setError(null);
+        setLoading(false);
+      } catch (e: any) {
+        if (fetchId !== lastFetchIdRef.current) return;
+        setError(e?.message ?? "Erreur de matching");
+        setData([]);
+        setLoading(false);
+      }
+    }, debounceMs);
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, [stableParams, debounceMs]);
+
+  return { loading, data, error };
 }

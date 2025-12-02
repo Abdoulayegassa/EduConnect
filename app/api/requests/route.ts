@@ -8,10 +8,11 @@ const PodEnum = z.enum(['morning','afternoon','evening']);
 
 const BodySchema = z.object({
   subject: z.string().min(2),
-  mode: z.enum(['visio','presentiel']),
-  // Nouveau format recommandé
+  // Produit visio-only
+  mode: z.enum(['visio']).optional(),
+  // Format recommandé
   slots: z.array(z.object({ day: DayEnum, pod: PodEnum })).optional(),
-  // Legacy: accepté pour compat
+  // Legacy compat (à supprimer plus tard)
   timeSlots: z.array(z.string()).optional(),
   request_meta: z.any().optional(),
 }).refine(
@@ -21,11 +22,14 @@ const BodySchema = z.object({
 
 // --- utils ---
 function simpleSlug(fr: string): string {
-  return fr.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  return fr
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeTimeSlotCode(s: string): { day?: string; pod?: string } {
-  // accepte déjà "mon:evening" ou texte avec () → on enlève le suffixe parenthèse si présent
   const raw = s.replace(/\s*\([^)]*\)\s*$/g, '').trim().toLowerCase();
   const parts = raw.split(':').map((x) => x.trim());
   if (parts.length === 2) {
@@ -47,16 +51,17 @@ function fromLegacyToSlots(timeSlots: string[]) {
       set.add(`${day}:${pod}`);
     }
   }
-  // convert to [{day,pod}] unique
   return Array.from(set).map((k) => {
     const [day, pod] = k.split(':');
     return { day, pod };
   });
 }
 
-function normalizeSlots(slots?: Array<{day:string;pod:string}>, timeSlots?: string[]) {
+function normalizeSlots(
+  slots?: Array<{day:string;pod:string}>,
+  timeSlots?: string[]
+) {
   if (slots && slots.length) {
-    // lower-case + filtre valeurs invalides + dédup
     const set = new Set<string>();
     for (const s of slots) {
       const day = String(s.day).toLowerCase();
@@ -73,53 +78,99 @@ function normalizeSlots(slots?: Array<{day:string;pod:string}>, timeSlots?: stri
       return { day, pod };
     });
   }
-  // fallback legacy
   return fromLegacyToSlots(timeSlots || []);
 }
 
-// --- handler ---
 export async function POST(req: Request) {
   try {
-    const body = BodySchema.parse(await req.json());
-    const supa = supabaseServer();
+    const payload = await req.json().catch(() => ({}));
+    const body = BodySchema.parse(payload);
 
-    const { data: { user } } = await supa.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'UNAUTHENTICATED' }, { status: 401 });
+    const supa = supabaseServer();
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'UNAUTHENTICATED' },
+        { status: 401 }
+      );
+    }
 
     const subject = body.subject.trim();
     const subject_slug = simpleSlug(subject);
-    const slots = normalizeSlots(body.slots, body.timeSlots); // => [{day,pod}] minuscule & unique
+    const slots = normalizeSlots(body.slots, body.timeSlots);
 
-    // Insertion (RLS: set_request_owner peut aussi remplir student_id, ici on le met explicitement)
+    // Produit visio-only
+    const mode: 'visio' = 'visio';
+
+    // 1) Création de la request
     const { data: reqRow, error: eInsert } = await supa
       .from('requests')
       .insert({
         student_id: user.id,
         subject,
         subject_slug,
-        mode: body.mode,
+        mode,           // visio-only
         status: 'open',
-        slots,                  // ← JSONB propre (le trigger normalize_request_slots assurera aussi une dernière passe)
+        slots,          // JSONB [{day,pod}]
         request_meta: body.request_meta ?? null,
       })
-      .select('id, subject, mode, slots, status, created_at, subject_slug')
+      .select('id, student_id, subject, subject_slug, mode, slots, status, created_at')
       .single();
 
-    if (eInsert) {
-      return NextResponse.json({ error: eInsert.message }, { status: 400 });
+    if (eInsert || !reqRow) {
+      return NextResponse.json(
+        { error: eInsert?.message ?? 'REQUEST_INSERT_ERROR' },
+        { status: 400 }
+      );
     }
 
-    // Matching instantané (la RPC peut créer des matches 'proposed')
-    const { data: tutors, error: eRpc } = await supa.rpc('match_tutors_for_request', {
-      p_request_id: reqRow.id,
-    });
+    // 2) Matching instantané : crée des matches "proposed" et renvoie des tuteurs
+    const { data: rawTutors, error: eRpc } = await supa.rpc(
+      'match_tutors_for_request',
+      { p_request_id: reqRow.id }
+    );
 
     if (eRpc) {
-      return NextResponse.json({ request: reqRow, tutors: [], warn: eRpc.message }, { status: 201 });
+      // On renvoie quand même la request, avec un warn
+      return NextResponse.json(
+        {
+          request: reqRow,
+          tutors: [],
+          warn: eRpc.message,
+        },
+        { status: 201 }
+      );
     }
 
-    return NextResponse.json({ request: reqRow, tutors: tutors ?? [] }, { status: 201 });
+    // Normalisation (type InstantTutor)
+    const tutors = Array.isArray(rawTutors)
+      ? rawTutors.map((t: any) => ({
+          id: t.tutor_id ?? t.id,
+          tutor_id: t.tutor_id ?? t.id,
+          full_name: t.full_name ?? t.fullName ?? null,
+          subjects: Array.isArray(t.subjects) ? t.subjects : [],
+          levels: Array.isArray(t.levels) ? t.levels : [],
+          rating: t.rating != null ? Number(t.rating) : null,
+          reviews_count: t.reviews_count != null ? Number(t.reviews_count) : null,
+          avatar_url: t.avatar_url ?? null,
+          hourly_rate: t.hourly_rate ?? null,
+          next_availabilities: Array.isArray(t.next_availabilities)
+            ? t.next_availabilities
+            : null,
+        }))
+      : [];
+
+    return NextResponse.json(
+      { request: reqRow, tutors },
+      { status: 201 }
+    );
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'INVALID_BODY' }, { status: 400 });
+    return NextResponse.json(
+      { error: e?.message ?? 'INVALID_BODY' },
+      { status: 400 }
+    );
   }
 }

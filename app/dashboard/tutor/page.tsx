@@ -5,33 +5,36 @@ import Topbar from '@/components/dashboard/Topbar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabaseBrowser } from '@/lib/supabase/browser';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Users, Calendar, Star, Check } from 'lucide-react';
+import { toast } from 'sonner';
+import { FullPageLoader } from '@/components/FullPageLoader';
+
 
 type MatchStatus = 'proposed' | 'accepted' | 'declined' | 'expired';
 
 type MatchRow = {
   id: string;
   request_id: string;
-  status: MatchStatus;
+  status: MatchStatus | string;
   created_at: string | null;
   request?: {
     subject: string | null;
-    level: string | null;
     mode: 'visio' | 'presentiel' | null;
   } | null;
 };
 
 type SessionRow = {
-  id: string;                 // uuid
-  request_id: string | null;  // uuid
+  id: string;
+  request_id: string | null;
   jitsi_link: string | null;
   starts_at: string | null;
   created_at: string | null;
-  match?: { id: string; status: MatchStatus } | null; // uuid
+  ends_at?: string | null;
+  match?: { id: string; status: MatchStatus | string } | null;
 };
 
 function useDebouncedCallback(cb: () => void, delay = 250) {
@@ -42,74 +45,145 @@ function useDebouncedCallback(cb: () => void, delay = 250) {
   }, [cb, delay]);
 }
 
+const badgeForStatus = (st: MatchStatus | string) => {
+  if (st === 'accepted') return 'bg-green-100 text-green-800';
+  if (st === 'proposed') return 'bg-yellow-100 text-yellow-800';
+  if (st === 'declined') return 'bg-red-100 text-red-800';
+  if (st === 'expired') return 'bg-gray-200 text-gray-700';
+  return 'bg-gray-100 text-gray-800';
+};
+
+const modeLabel = (m?: 'visio' | 'presentiel' | null) =>
+  m === 'visio' ? 'Visioconférence' : m === 'presentiel' ? 'Présentiel' : '—';
+
 export default function TutorDashboard() {
   const supa = useMemo(() => supabaseBrowser(), []);
 
   const [activeTab, setActiveTab] = useState<'proposals' | 'sessions'>('proposals');
   const [loading, setLoading] = useState(true);
 
-  const [profileInfo, setProfileInfo] = useState<{ full_name?: string | null; degree?: string | null }>({});
+  const [profileInfo, setProfileInfo] = useState<{
+    full_name?: string | null;
+    degree?: string | null;
+  }>({});
+
   const [proposed, setProposed] = useState<MatchRow[]>([]);
   const [accepted, setAccepted] = useState<MatchRow[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [busyMatchId, setBusyMatchId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tutorId, setTutorId] = useState<string | null>(null);
+  
 
-  const channelRef = useRef<ReturnType<ReturnType<typeof supabaseBrowser>['channel']> | null>(null);
-  const badgeForStatus = (st: MatchStatus | string) => {
-    if (st === 'accepted') return 'bg-green-100 text-green-800';
-    if (st === 'proposed') return 'bg-yellow-100 text-yellow-800';
-    if (st === 'declined') return 'bg-red-100 text-red-800';
-    if (st === 'expired')  return 'bg-gray-200 text-gray-700';
-    return 'bg-gray-100 text-gray-800';
-  };
+  const [tutorId, setTutorId] = useState<string | null>(null);
+  const channelRef = useRef<any>(null);
 
   const reloadData = useCallback(async () => {
-    const { data: { user } } = await supa.auth.getUser();
-    if (!user) return;
+    
+
+    const {
+      data: { user },
+      error: authErr,
+    } = await supa.auth.getUser();
+
+    if (authErr) {
+      console.error('auth.getUser error', authErr);
+    }
+
+    if (!user) {
+      return;
+    }
     setTutorId(user.id);
 
-    const { data: mP } = await supa
+    // 1) Récupérer tous les matches de ce tuteur (sans join ambigu)
+    const { data: mAll, error: eAll } = await supa
       .from('matches')
-      .select(`
-        id, request_id, status, created_at,
-        request:requests(subject, level, mode)
-      `)
+      .select('id, request_id, status, created_at')
       .eq('tutor_id', user.id)
-      .eq('status', 'proposed')
       .order('created_at', { ascending: false });
-    setProposed((mP as any) ?? []);
 
-    const { data: mA } = await supa
-      .from('matches')
-      .select(`
-        id, request_id, status, created_at,
-        request:requests(subject, level, mode)
-      `)
-      .eq('tutor_id', user.id)
-      .eq('status', 'accepted')
-      .order('created_at', { ascending: false });
-    setAccepted((mA as any) ?? []);
+    if (eAll) {
+      console.error('matches SELECT error', eAll);
+      setProposed([]);
+      setAccepted([]);
+    } else {
+      const all = ((mAll ?? []) as any as MatchRow[]) ?? [];
 
-    const { data: s } = await supa
+      // 1.b) Charger les informations de demandes associées (subject, mode)
+      const reqIds = Array.from(
+        new Set(
+          all
+            .map((m) => m.request_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+
+      let requestsById = new Map<
+        string,
+        { subject: string | null; mode: 'visio' | 'presentiel' | null }
+      >();
+
+      if (reqIds.length > 0) {
+        const { data: reqRows, error: eReq } = await supa
+          .from('requests')
+          .select('id, subject, mode')
+          .in('id', reqIds);
+
+        if (eReq) {
+          console.error('requests SELECT (for matches) error', eReq);
+        } else if (reqRows) {
+          requestsById = new Map(
+            reqRows.map((r: any) => [
+              r.id as string,
+              { subject: r.subject as string | null, mode: r.mode },
+            ]),
+          );
+        }
+      }
+
+            const withRequest: MatchRow[] = all.map((m) => ({
+        ...m,
+        request: requestsById.get(m.request_id) ?? null,
+      }));
+
+      const onlyProposed = withRequest.filter((m) => m.status === 'proposed');
+      const onlyAccepted = withRequest.filter((m) => m.status === 'accepted');
+
+      setProposed(onlyProposed);
+      setAccepted(onlyAccepted);
+    }
+
+
+    // 2) Sessions du tuteur (join clair matches → sessions)
+    const { data: s, error: eSess } = await supa
       .from('sessions')
-      .select(`
-        id, request_id, jitsi_link, starts_at, created_at,
+      .select(
+        `
+        id, request_id, jitsi_link, starts_at, created_at, ends_at,
         match:matches!inner(id, status, tutor_id)
-      `)
+      `,
+      )
       .eq('match.tutor_id', user.id)
       .order('starts_at', { ascending: false });
-    setSessions((s as any) ?? []);
+
+    if (eSess) {
+      console.error('sessions SELECT error', eSess);
+      setSessions([]);
+    } else {
+      setSessions((s as any as SessionRow[]) ?? []);
+    }
   }, [supa]);
 
-  // Recrée la version debounced après définition de reloadData
-  const debouncedReloadFixed = useDebouncedCallback(reloadData, 250);
+  const debouncedReload = useDebouncedCallback(reloadData, 250);
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supa.auth.getUser();
-      if (!user) { window.location.href = '/auth/login'; return; }
+      const {
+        data: { user },
+      } = await supa.auth.getUser();
+      if (!user) {
+        window.location.href = '/auth/login';
+        return;
+      }
 
       const { data: profile } = await supa
         .from('profiles')
@@ -118,7 +192,8 @@ export default function TutorDashboard() {
         .maybeSingle();
 
       const role: 'student' | 'tutor' | null =
-        (profile?.role as any) ?? ((user.user_metadata as any)?.role ?? null);
+        (profile?.role as any) ?? (user.user_metadata as any)?.role ?? null;
+
       if (role !== 'tutor') {
         window.location.replace('/dashboard/student');
         return;
@@ -134,7 +209,6 @@ export default function TutorDashboard() {
     })();
   }, [supa, reloadData]);
 
-  // Realtime ciblé sur les matches du tuteur + sessions liées
   useEffect(() => {
     if (!tutorId) return;
 
@@ -150,14 +224,12 @@ export default function TutorDashboard() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'matches', filter: filterMatches },
-        () => debouncedReloadFixed()
+        () => debouncedReload(),
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'sessions' },
-        // On ne peut pas filtrer sessions par tutor_id directement sans vue ;
-        // On recharge simplement (debounced), la requête sessions filtre déjà par match.tutor_id
-        () => debouncedReloadFixed()
+        () => debouncedReload(),
       )
       .subscribe();
 
@@ -169,7 +241,7 @@ export default function TutorDashboard() {
         channelRef.current = null;
       }
     };
-  }, [supa, tutorId, debouncedReloadFixed]);
+  }, [supa, tutorId, debouncedReload]);
 
   const stats = useMemo(() => {
     const proposedCount = proposed.length;
@@ -178,90 +250,118 @@ export default function TutorDashboard() {
     return { proposed: proposedCount, accepted: acceptedCount, scheduled, avgRating: 0 };
   }, [proposed, accepted, sessions]);
 
-  // Le tuteur peut seulement DECLINER
-  const onDecline = useCallback(async (matchId: string) => {
-    setErr(null);
-    setBusyMatchId(matchId);
+const onDecline = useCallback(async (matchId: string) => {
+  setErr(null);
+  setBusyMatchId(matchId);
+  try {
+    const res = await fetch(`/api/matches/${matchId}/decline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    let payload: any = null;
     try {
-      const res = await fetch(`/api/matches/${matchId}/decline`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      const payload = await (async () => { try { return await res.json(); } catch { return null; } })();
-      if (!res.ok) throw new Error(payload?.error || `Erreur API (${res.status})`);
-
-      setProposed(prev => prev.filter(m => m.id !== matchId));
-    } catch (e: any) {
-      setErr(e?.message ?? "Impossible de décliner cette proposition.");
-    } finally {
-      setBusyMatchId(null);
+      payload = await res.json();
+    } catch {
+      // ce n'est pas grave si le body est vide
+      payload = null;
     }
-  }, []);
 
-  if (loading) {
-    return (
-      <main className="max-w-6xl mx-auto p-6">
-        <h1 className="text-2xl font-semibold">Chargement…</h1>
-      </main>
-    );
+    console.log('decline response', res.status, payload);
+
+    // ✅ On ne regarde que le status HTTP
+    if (!res.ok) {
+      const msg =
+        payload?.error || `Erreur API (${res.status}) pour le déclin`;
+      toast.error(msg);  // ⬅️ ici
+      throw new Error(msg);
+    }
+
+    // ✅ Succès : on enlève le match de la liste
+    setProposed((prev) => prev.filter((m) => m.id !== matchId));
+     toast.success('Proposition déclinée.'); // ✅ retour positif
+  } catch (e: any) {
+    console.error(e);
+    setErr(e?.message ?? 'Impossible de décliner cette proposition.');
+  } finally {
+    setBusyMatchId(null);
   }
+}, []);
+
+
+
+ if (loading) {
+  return <FullPageLoader />;
+}
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <Topbar fullName={profileInfo.full_name || undefined} />
 
       <div className="container mx-auto px-4 py-8">
+        {/* Header profil */}
         <div className="relative mb-6 rounded-2xl border bg-white overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-50 via-white to-purple-50" />
           <div className="relative px-4 sm:px-6 lg:px-8 py-6">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
               {profileInfo.full_name || '—'}
             </h1>
-            <p className="mt-1 text-sm text-gray-600">{profileInfo.degree || '—'}</p>
+            <p className="mt-1 text-sm text-gray-600">
+              {profileInfo.degree || '—'}
+            </p>
           </div>
         </div>
 
+        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Card><CardContent className="p-4 flex items-center">
-            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
-              <Users className="w-5 h-5 text-purple-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Propositions reçues</p>
-              <p className="text-2xl font-bold">{stats.proposed}</p>
-            </div>
-          </CardContent></Card>
+          <Card>
+            <CardContent className="p-4 flex items-center">
+              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
+                <Users className="w-5 h-5 text-purple-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Propositions reçues</p>
+                <p className="text-2xl font-bold">{stats.proposed}</p>
+              </div>
+            </CardContent>
+          </Card>
 
-          <Card><CardContent className="p-4 flex items-center">
-            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mr-3">
-              <Check className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Acceptées</p>
-              <p className="text-2xl font-bold">{stats.accepted}</p>
-            </div>
-          </CardContent></Card>
+          <Card>
+            <CardContent className="p-4 flex items-center">
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mr-3">
+                <Check className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Acceptées</p>
+                <p className="text-2xl font-bold">{stats.accepted}</p>
+              </div>
+            </CardContent>
+          </Card>
 
-          <Card><CardContent className="p-4 flex items-center">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
-              <Calendar className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Sessions planifiées</p>
-              <p className="text-2xl font-bold">{stats.scheduled}</p>
-            </div>
-          </CardContent></Card>
+          <Card>
+            <CardContent className="p-4 flex items-center">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+                <Calendar className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Sessions planifiées</p>
+                <p className="text-2xl font-bold">{stats.scheduled}</p>
+              </div>
+            </CardContent>
+          </Card>
 
-          <Card><CardContent className="p-4 flex items-center">
-            <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center mr-3">
-              <Star className="w-5 h-5 text-yellow-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Note moyenne</p>
-              <p className="text-2xl font-bold">{(0).toFixed(1)}</p>
-            </div>
-          </CardContent></Card>
+          <Card>
+            <CardContent className="p-4 flex items-center">
+              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center mr-3">
+                <Star className="w-5 h-5 text-yellow-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Note moyenne</p>
+                <p className="text-2xl font-bold">{(0).toFixed(1)}</p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
@@ -270,25 +370,32 @@ export default function TutorDashboard() {
             <TabsTrigger value="sessions">Sessions</TabsTrigger>
           </TabsList>
 
+          {/* Propositions */}
           <TabsContent value="proposals" className="mt-6">
             {proposed.length === 0 ? (
-              <Card><CardContent className="p-6 text-gray-600">Aucune proposition pour le moment.</CardContent></Card>
+              <Card>
+                <CardContent className="p-6 text-gray-600 text-sm">
+                  Aucune proposition pour le moment. Tu seras notifié dès qu’un étudiant te choisit.
+                </CardContent>
+              </Card>
             ) : (
               <div className="grid gap-4">
                 {proposed.map((m) => (
                   <Card key={m.id}>
-                    <CardHeader className="pb-2">
+                    <CardContent className="p-5">
                       <div className="flex items-center justify-between">
                         <div>
-                          <CardTitle>{m.request?.subject ?? '—'}</CardTitle>
-                          <CardDescription>
-                            {m.request?.level ?? '—'} • {m.request?.mode ?? '—'}
-                          </CardDescription>
+                          <p className="text-base font-semibold">
+                            {m.request?.subject ?? `Demande #${m.request_id.slice(0, 8)}`}
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            {modeLabel(m.request?.mode)} • Reçue le{' '}
+                            {m.created_at ? fmtDate(m.created_at) : '—'}
+                          </p>
                         </div>
                         <Badge className={badgeForStatus(m.status)}>{m.status}</Badge>
                       </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
+
                       <div className="mt-3 flex gap-2">
                         <Button
                           size="sm"
@@ -298,12 +405,7 @@ export default function TutorDashboard() {
                         >
                           {busyMatchId === m.id ? '…' : 'Décliner'}
                         </Button>
-                        <Link
-                          href={`/request/${m.request_id}`}
-                          className="text-blue-600 hover:underline text-sm self-center"
-                        >
-                          Voir la demande
-                        </Link>
+                        {/* Si plus tard tu crées une page /request/[id], tu pourras remettre un lien ici */}
                       </div>
                     </CardContent>
                   </Card>
@@ -312,33 +414,64 @@ export default function TutorDashboard() {
             )}
           </TabsContent>
 
+          {/* Sessions */}
           <TabsContent value="sessions" className="mt-6">
             {sessions.length === 0 ? (
-              <Card><CardContent className="p-6 text-gray-600">Aucune session.</CardContent></Card>
+              <Card>
+                <CardContent className="p-6 text-gray-600 text-sm">
+                  Aucune session pour le moment.
+                </CardContent>
+              </Card>
             ) : (
               <div className="grid gap-4">
-                {sessions.map((s) => (
-                  <Card key={s.id}>
-                    <CardContent className="p-6">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium">Session #{s.id.slice(0, 8)}</p>
-                          <p className="text-sm text-gray-600">
-                            {s.starts_at ? fmtDate(s.starts_at) : 'à planifier'}
-                          </p>
+                {sessions.map((s) => {
+                  const now = Date.now();
+                  const startMs = s.starts_at ? new Date(s.starts_at).getTime() : null;
+                  const endMs = s.ends_at
+                    ? new Date(s.ends_at).getTime()
+                    : startMs
+                    ? startMs + 60 * 60 * 1000
+                    : null;
+
+                  const isFinished = !!endMs && endMs < now;
+
+                  const effectiveStatus: MatchStatus | string = isFinished
+                    ? 'expired'
+                    : s.match?.status ?? 'accepted';
+
+                  const statusLabel = isFinished ? 'terminée' : s.match?.status ?? 'programmée';
+                  const badgeClass = badgeForStatus(effectiveStatus);
+
+                  return (
+                    <Card key={s.id}>
+                      <CardContent className="p-6">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium">
+                              Session #{s.id.slice(0, 8)}
+                            </p>
+                            <p className="text-sm text-gray-600">
+                              {s.starts_at ? fmtDate(s.starts_at) : 'À planifier'}
+                            </p>
+                          </div>
+                          <Badge className={badgeClass}>{statusLabel}</Badge>
                         </div>
-                        <Badge className={badgeForStatus(s.match?.status ?? '')}>{s.match?.status ?? '—'}</Badge>
-                      </div>
-                      {s.jitsi_link && (
-                        <Button size="sm" className="mt-3" asChild>
-                          <a href={s.jitsi_link} target="_blank" rel="noreferrer">
-                            Ouvrir la salle
-                          </a>
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+
+                        {s.jitsi_link && !isFinished && (
+                          <Button size="sm" className="mt-3" asChild>
+                            <a
+                              href={s.jitsi_link}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Ouvrir la salle
+                            </a>
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </TabsContent>

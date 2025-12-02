@@ -172,7 +172,7 @@ export default function HomePage() {
             <Card className="text-center hover:shadow-lg transition-shadow">
               <CardHeader>
                 <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Video className="w-8 h-8 text-green-600" />
+                  <span className="text-2xl font-bold text-green-600">3</span>
                 </div>
                 <CardTitle>Commencez à apprendre</CardTitle>
               </CardHeader>

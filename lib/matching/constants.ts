@@ -1,7 +1,7 @@
 // /lib/matching/constants.ts
 export type Day = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 export type Pod = "morning" | "afternoon" | "evening";
-export type Mode = "visio" | "presentiel";
+export type Mode = "visio";
 
 export const DAYS: Day[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 export const PODS: Pod[] = ["morning", "afternoon", "evening"];
