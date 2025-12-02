@@ -1,52 +1,55 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { supabaseBrowser } from '@/lib/supabase/browser';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu';
-import { BrandLink } from '@/components/brand/brand';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { usePathname } from 'next/navigation';
 
-type Props = { fullName?: string | null };
+type TopbarProps = {
+  fullName?: string;
+};
 
-function initials(name?: string | null) {
-  if (!name) return '??';
-  const p = name.trim().split(/\s+/);
-  return ((p[0]?.[0] ?? '') + (p[p.length - 1]?.[0] ?? '')).toUpperCase();
-}
+export default function Topbar({ fullName }: TopbarProps) {
+  const pathname = usePathname();
 
-export default function Topbar({ fullName }: Props) {
-  const router = useRouter();
-  const supa = supabaseBrowser();
-
-  async function logout() {
-    await supa.auth.signOut();
-    router.replace('/auth/login');
-  }
+  const isStudent = pathname?.startsWith('/dashboard/student');
+  const isTutor = pathname?.startsWith('/dashboard/tutor');
 
   return (
-    <header className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
-      <div className="mx-auto max-w-screen-xl h-12 px-4 flex items-center justify-between">
-        {/* GAUCHE : logo + nom (identique à la home) */}
-        <BrandLink href="/" logoClassName="h-8 w-8" wordmarkClassName="text-2xl font-bold" />
+    <header className="border-b bg-background/80 backdrop-blur">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+        {/* Logo inline au lieu de <Brand /> */}
+        <Link href="/" className="flex items-center gap-2 font-semibold">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm">
+            EC
+          </span>
+          <span className="text-base sm:text-lg tracking-tight">
+            EduConnect
+          </span>
+        </Link>
 
-        {/* DROITE : initiales + menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="h-9 w-9 rounded-full bg-gray-200 text-gray-700 font-semibold flex items-center justify-center"
-              title={fullName || 'Utilisateur'}
-              aria-label="Menu utilisateur"
-            >
-              {initials(fullName)}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem asChild><Link href="/profile">Mon profil</Link></DropdownMenuItem>
-            <DropdownMenuItem onClick={logout}>Se déconnecter</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex items-center gap-4">
+          {/* Petit indicateur de rôle */}
+          {isStudent && (
+            <span className="text-xs sm:text-sm px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+              Espace étudiant
+            </span>
+          )}
+          {isTutor && (
+            <span className="text-xs sm:text-sm px-2 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-100">
+              Espace tuteur
+            </span>
+          )}
+
+          {/* Nom utilisateur */}
+          {fullName && (
+            <span className="hidden sm:inline text-sm text-muted-foreground">
+              {fullName}
+            </span>
+          )}
+
+          {/* Toggle dark / light */}
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );
