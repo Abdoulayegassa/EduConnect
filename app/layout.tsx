@@ -11,7 +11,12 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "EduConnect",
-  description: "App",
+  description: "Plateforme de mise en relation étudiants / tuteurs",
+   icons: {
+    icon: '/favicon.ico',       // 👈 ton fichier dans /public
+    shortcut: '/favicon.png',
+    apple: '/favicon.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
