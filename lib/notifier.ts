@@ -1,36 +1,41 @@
 // lib/notifier.ts
 import { Resend } from 'resend';
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const resendKey = process.env.RESEND_API_KEY;
+const fromEmail =
+  process.env.RESEND_FROM_EMAIL ?? 'EduConnect <onboarding@resend.dev>';
 
-let client: Resend | null = null;
-
-function getClient() {
-  if (!client) {
-    if (!RESEND_API_KEY) {
-      console.warn('[notifier] RESEND_API_KEY manquant, les emails ne seront pas envoyés.');
-      return null;
-    }
-    client = new Resend(RESEND_API_KEY);
-  }
-  return client;
+if (!resendKey) {
+  console.warn('[notifier] RESEND_API_KEY not set, emails disabled');
+} else {
+  console.log('[notifier] RESEND_API_KEY loaded');
 }
 
-export async function sendEmail(to: string, subject: string, html: string) {
-  const resend = getClient();
+const resend = resendKey ? new Resend(resendKey) : null;
 
-  // En local sans clé → on log seulement
+export async function sendEmail(to: string, subject: string, html: string) {
   if (!resend) {
-    console.log('[MOCK EMAIL]', { to, subject /*, html*/ });
-    return { ok: false, mocked: true };
+    console.warn('[sendEmail] SKIP (no RESEND_API_KEY)', { to, subject });
+    return;
   }
 
-  await resend.emails.send({
-    from: 'EduConnect <no-reply@ton-domaine.com>',
-    to,
-    subject,
-    html,
-  });
+  try {
+    const result = await resend.emails.send({
+      from: fromEmail,
+      to,
+      subject,
+      html,
+    });
 
-  return { ok: true };
+    console.log('[sendEmail] sent', {
+      to,
+      subject,
+      id: result.data?.id,
+    });
+
+    return result;
+  } catch (err) {
+    console.error('[sendEmail] ERROR', err);
+    // On ne throw pas pour ne pas casser /api/reservations
+  }
 }
