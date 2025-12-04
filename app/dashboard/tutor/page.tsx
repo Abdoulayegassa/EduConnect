@@ -65,6 +65,8 @@ export default function TutorDashboard() {
   const [profileInfo, setProfileInfo] = useState<{
     full_name?: string | null;
     degree?: string | null;
+     avg_rating?: number | null;
+  ratings_count?: number | null;
   }>({});
 
   const [proposed, setProposed] = useState<MatchRow[]>([]);
@@ -187,7 +189,7 @@ export default function TutorDashboard() {
 
       const { data: profile } = await supa
         .from('profiles')
-        .select('role, full_name, degree')
+        .select('role, full_name, degree, avg_rating, ratings_count')
         .eq('id', user.id)
         .maybeSingle();
 
@@ -202,6 +204,8 @@ export default function TutorDashboard() {
       setProfileInfo({
         full_name: profile?.full_name ?? (user.user_metadata as any)?.full_name ?? null,
         degree: profile?.degree ?? null,
+        avg_rating: profile?.avg_rating ?? 0,
+  ratings_count: profile?.ratings_count ?? 0,
       });
 
       await reloadData();
@@ -247,8 +251,9 @@ export default function TutorDashboard() {
     const proposedCount = proposed.length;
     const acceptedCount = accepted.length;
     const scheduled = sessions.length;
-    return { proposed: proposedCount, accepted: acceptedCount, scheduled, avgRating: 0 };
-  }, [proposed, accepted, sessions]);
+    const avgRating = profileInfo.avg_rating ?? 0;
+    return { proposed: proposedCount, accepted: acceptedCount, scheduled, avgRating  };
+  }, [proposed, accepted, sessions, profileInfo.avg_rating]);
 
 const onDecline = useCallback(async (matchId: string) => {
   setErr(null);
@@ -358,7 +363,14 @@ const onDecline = useCallback(async (matchId: string) => {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Note moyenne</p>
-                <p className="text-2xl font-bold">{(0).toFixed(1)}</p>
+               <p className="text-2xl font-bold">
+        {stats.avgRating.toFixed(1)}
+      </p>
+      <p className="text-xs text-gray-500">
+        {profileInfo.ratings_count && profileInfo.ratings_count > 0
+          ? `${profileInfo.ratings_count} avis`
+          : 'Aucune note pour le moment'}
+      </p>
               </div>
             </CardContent>
           </Card>
