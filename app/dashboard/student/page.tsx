@@ -439,52 +439,44 @@ if (loading) {
         </div>
 
         {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardContent className="p-4 flex items-center">
-              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
-                <BookOpen className="w-5 h-5 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Demandes actives</p>
-                <p className="text-2xl font-bold">{stats.activeReq}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 flex items-center">
-              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mr-3">
-                <Calendar className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Sessions programmées</p>
-                <p className="text-2xl font-bold">{stats.scheduled}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 flex items-center">
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
-                <Users className="w-5 h-5 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Tuteurs trouvés</p>
-                <p className="text-2xl font-bold">{stats.tutorsFound}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 flex items-center">
-              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center mr-3">
-                <Star className="w-5 h-5 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Note moyenne</p>
-                <p className="text-2xl font-bold">{(0).toFixed(1)}</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+  <Card>
+    <CardContent className="p-4 flex items-center">
+      <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+        <BookOpen className="w-5 h-5 text-blue-600" />
+      </div>
+      <div>
+        <p className="text-sm text-gray-600">Demandes actives</p>
+        <p className="text-2xl font-bold">{stats.activeReq}</p>
+      </div>
+    </CardContent>
+  </Card>
+
+  <Card>
+    <CardContent className="p-4 flex items-center">
+      <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mr-3">
+        <Calendar className="w-5 h-5 text-green-600" />
+      </div>
+      <div>
+        <p className="text-sm text-gray-600">Sessions programmées</p>
+        <p className="text-2xl font-bold">{stats.scheduled}</p>
+      </div>
+    </CardContent>
+  </Card>
+
+  <Card>
+    <CardContent className="p-4 flex items-center">
+      <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
+        <Users className="w-5 h-5 text-purple-600" />
+      </div>
+      <div>
+        <p className="text-sm text-gray-600">Tuteurs trouvés</p>
+        <p className="text-2xl font-bold">{stats.tutorsFound}</p>
+      </div>
+    </CardContent>
+  </Card>
+</div>
+
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
           <TabsList className="grid w-full grid-cols-2">
