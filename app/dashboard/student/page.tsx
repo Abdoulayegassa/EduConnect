@@ -100,7 +100,8 @@ export default function StudentDashboard() {
 
   const created = search.get('created') === '1';
   const [showCreatedBanner, setShowCreatedBanner] = useState(created);
-
+  const [sessionRatings, setSessionRatings] = useState<Map<UUID, number>>(new Map());
+  const [ratingBusyId, setRatingBusyId] = useState<UUID | null>(null); 
   const [activeTab, setActiveTab] = useState<'requests' | 'sessions'>('requests');
   const [loading, setLoading] = useState(true);
 
@@ -162,12 +163,35 @@ export default function StudentDashboard() {
     const ids = Array.from(reqIdsRef.current);
 
     // 2) sessions via vue (match_status inclus)
-    const { data: sess } = await supa
+       const { data: sess } = await supa
       .from('v_user_sessions')
       .select('id, request_id, starts_at, ends_at, mode, jitsi_link, match_status')
       .order('starts_at', { ascending: false });
 
-    setSessions((sess ?? []) as SessionRow[]);
+    const sessRows = (sess ?? []) as SessionRow[];
+    setSessions(sessRows);
+
+    // 🔢 Charger les notes existantes pour ces sessions
+    if (sessRows.length > 0) {
+      const sessionIds = sessRows.map((s) => s.id as UUID);
+      const { data: ratings, error: rErr } = await supa
+        .from('session_ratings')
+        .select('session_id, rating')
+        .in('session_id', sessionIds);
+
+      if (!rErr && ratings) {
+        const map = new Map<UUID, number>();
+        ratings.forEach((r: any) => {
+          map.set(r.session_id as UUID, r.rating as number);
+        });
+        setSessionRatings(map);
+      } else {
+        setSessionRatings(new Map());
+      }
+    } else {
+      setSessionRatings(new Map());
+    }
+
 
   // 3) matches groupés par request_id
 if (ids.length) {
@@ -398,6 +422,49 @@ if (ids.length) {
   [reloadData],
 );
 
+       const handleRateSession = useCallback(
+    async (sessionId: UUID, value: number) => {
+      try {
+        setRatingBusyId(sessionId);
+        const res = await fetch(`/api/sessions/${sessionId}/rate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rating: value }),
+        });
+
+        const json = await (async () => {
+          try {
+            return await res.json();
+          } catch {
+            return null;
+          }
+        })();
+
+        if (!res.ok || !json?.ok) {
+          const msg =
+            json?.error || `Erreur lors de l’enregistrement de la note (HTTP ${res.status})`;
+          toast.error(msg);
+          throw new Error(msg);
+        }
+
+        // Met à jour la note côté front
+        setSessionRatings((prev) => {
+          const next = new Map(prev);
+          next.set(sessionId, value);
+          return next;
+        });
+
+        toast.success('Merci, ta note a bien été enregistrée.');
+      } catch (e: any) {
+        console.error('handleRateSession error', e);
+        toast.error(e?.message ?? 'Impossible de noter cette session.');
+      } finally {
+        setRatingBusyId(null);
+      }
+    },
+    [],
+  );
+ 
 
 if (loading) {
   return <FullPageLoader />;
@@ -408,7 +475,7 @@ if (loading) {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <Topbar fullName={profileInfo.full_name || undefined} />
 
-      <div className="container mx-auto px-4 py-8">
+      <div className="max-w-5xl mx-auto px-3 sm:px-4 py-6 sm:py-8">
         {showCreatedBanner && (
           <div className="mb-4 rounded-lg border bg-green-50 text-green-800 px-4 py-3 text-sm">
             🎉 Ta demande a été publiée avec succès. Pour l’instant, elle est en attente d’un tuteur disponible. Tu recevras une notification dès qu’un tuteur se positionne.
@@ -439,7 +506,8 @@ if (loading) {
         </div>
 
         {/* KPIs */}
-<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+
   <Card>
     <CardContent className="p-4 flex items-center">
       <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
@@ -479,10 +547,15 @@ if (loading) {
 
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="requests">Mes demandes</TabsTrigger>
-            <TabsTrigger value="sessions">Sessions</TabsTrigger>
-          </TabsList>
+         <TabsList className="w-full sm:w-auto grid grid-cols-2 sm:inline-grid">
+  <TabsTrigger className="text-xs sm:text-sm" value="requests">
+    Mes demandes
+  </TabsTrigger>
+  <TabsTrigger className="text-xs sm:text-sm" value="sessions">
+    Sessions
+  </TabsTrigger>
+</TabsList>
+
 
           {/* Onglet demandes */}
           <TabsContent value="requests" className="mt-6">
@@ -678,6 +751,41 @@ if (loading) {
                               Rejoindre
                             </a>
                           </Button>
+                        )}
+                         
+                          {/* ⭐ Notation du tuteur si session terminée */}
+                        {isFinished && (
+                          <div className="mt-4">
+                            {sessionRatings.get(s.id as UUID) ? (
+                              <p className="text-sm text-gray-600">
+                                Ta note :{' '}
+                                <span className="font-semibold">
+                                  {sessionRatings.get(s.id as UUID)}/5
+                                </span>
+                              </p>
+                            ) : (
+                              <div>
+                                <p className="text-sm text-gray-600 mb-2">
+                                  Noter ce tuteur :
+                                </p>
+                                <div className="flex gap-2">
+                                  {[1, 2, 3, 4, 5].map((value) => (
+                                    <Button
+                                      key={value}
+                                      size="icon"
+                                      variant="outline"
+                                      disabled={ratingBusyId === (s.id as UUID)}
+                                      onClick={() =>
+                                        handleRateSession(s.id as UUID, value)
+                                      }
+                                    >
+                                      {value}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </CardContent>
                     </Card>

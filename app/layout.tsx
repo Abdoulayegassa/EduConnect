@@ -6,6 +6,7 @@ import SupabaseAuthSync from "@/components/SupabaseAuthSync";
 import NotificationsProvider from "@/components/NotificationsProvider";
 import { Toaster } from "sonner";
 import { AppProviders } from "./providers";
+import { Viewport } from "next/dist/lib/metadata/types/extra-types";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -17,6 +18,11 @@ export const metadata: Metadata = {
     shortcut: '/favicon.png',
     apple: '/favicon.png',
   },
+};
+   
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

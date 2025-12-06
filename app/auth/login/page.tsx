@@ -134,13 +134,16 @@ export default function LoginPage() {
         </div>
       </nav>
 
-      <div className="container mx-auto px-4 py-20">
-        <div className="max-w-md mx-auto">
+      <div className="container mx-auto px-4 py-10 sm:py-20">
+  <div className="max-w-md mx-auto">
+
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              Se connecter
-            </h1>
-            <p className="text-gray-600">Accédez à votre espace personnel</p>
+           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
+  Se connecter
+</h1>
+<p className="text-sm sm:text-base text-gray-600">
+  Accédez à votre espace personnel
+</p>
           </div>
 
           <Card className="shadow-xl border-0">

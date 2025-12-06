@@ -65,8 +65,7 @@ export default function TutorDashboard() {
   const [profileInfo, setProfileInfo] = useState<{
     full_name?: string | null;
     degree?: string | null;
-     avg_rating?: number | null;
-  ratings_count?: number | null;
+    
   }>({});
 
   const [proposed, setProposed] = useState<MatchRow[]>([]);
@@ -74,7 +73,9 @@ export default function TutorDashboard() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [busyMatchId, setBusyMatchId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  
+    const [avgRating, setAvgRating] = useState(0);
+  const [ratingsCount, setRatingsCount] = useState(0);
+
 
   const [tutorId, setTutorId] = useState<string | null>(null);
   const channelRef = useRef<any>(null);
@@ -173,6 +174,26 @@ export default function TutorDashboard() {
     } else {
       setSessions((s as any as SessionRow[]) ?? []);
     }
+         let avg = 0;
+    let count = 0;
+
+    const { data: ratings, error: rErr } = await supa
+      .from('session_ratings')
+      .select('rating')
+      .eq('tutor_id', user.id);
+
+    if (!rErr && ratings && ratings.length > 0) {
+      count = ratings.length;
+      const sum = ratings.reduce(
+        (acc: number, r: any) => acc + (r.rating ?? 0),
+        0,
+      );
+      avg = sum / count;
+    }
+
+    setAvgRating(avg);
+    setRatingsCount(count);
+
   }, [supa]);
 
   const debouncedReload = useDebouncedCallback(reloadData, 250);
@@ -189,7 +210,7 @@ export default function TutorDashboard() {
 
       const { data: profile } = await supa
         .from('profiles')
-        .select('role, full_name, degree, avg_rating, ratings_count')
+        .select('role, full_name, degree')
         .eq('id', user.id)
         .maybeSingle();
 
@@ -204,8 +225,7 @@ export default function TutorDashboard() {
       setProfileInfo({
         full_name: profile?.full_name ?? (user.user_metadata as any)?.full_name ?? null,
         degree: profile?.degree ?? null,
-        avg_rating: profile?.avg_rating ?? 0,
-  ratings_count: profile?.ratings_count ?? 0,
+   
       });
 
       await reloadData();
@@ -251,9 +271,9 @@ export default function TutorDashboard() {
     const proposedCount = proposed.length;
     const acceptedCount = accepted.length;
     const scheduled = sessions.length;
-    const avgRating = profileInfo.avg_rating ?? 0;
+  
     return { proposed: proposedCount, accepted: acceptedCount, scheduled, avgRating  };
-  }, [proposed, accepted, sessions, profileInfo.avg_rating]);
+  }, [proposed, accepted, sessions, avgRating]);
 
 const onDecline = useCallback(async (matchId: string) => {
   setErr(null);
@@ -304,7 +324,8 @@ const onDecline = useCallback(async (matchId: string) => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <Topbar fullName={profileInfo.full_name || undefined} />
 
-      <div className="container mx-auto px-4 py-8">
+      <div className="max-w-5xl mx-auto px-3 sm:px-4 py-6 sm:py-8">
+
         {/* Header profil */}
         <div className="relative mb-6 rounded-2xl border bg-white overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-50 via-white to-purple-50" />
@@ -319,7 +340,8 @@ const onDecline = useCallback(async (matchId: string) => {
         </div>
 
         {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+
           <Card>
             <CardContent className="p-4 flex items-center">
               <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
@@ -361,26 +383,32 @@ const onDecline = useCallback(async (matchId: string) => {
               <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center mr-3">
                 <Star className="w-5 h-5 text-yellow-600" />
               </div>
-              <div>
+                           <div>
                 <p className="text-sm text-gray-600">Note moyenne</p>
-               <p className="text-2xl font-bold">
-        {stats.avgRating.toFixed(1)}
-      </p>
-      <p className="text-xs text-gray-500">
-        {profileInfo.ratings_count && profileInfo.ratings_count > 0
-          ? `${profileInfo.ratings_count} avis`
-          : 'Aucune note pour le moment'}
-      </p>
+                <p className="text-2xl font-bold">
+                  {ratingsCount > 0 ? stats.avgRating.toFixed(1) : '—'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {ratingsCount > 0
+                    ? `${ratingsCount} avis`
+                    : 'Aucune note pour le moment'}
+                </p>
               </div>
+
             </CardContent>
           </Card>
         </div>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="proposals">Propositions</TabsTrigger>
-            <TabsTrigger value="sessions">Sessions</TabsTrigger>
-          </TabsList>
+         <TabsList className="w-full sm:w-auto grid grid-cols-2 sm:inline-grid">
+  <TabsTrigger className="text-xs sm:text-sm" value="proposals">
+    Propositions
+  </TabsTrigger>
+  <TabsTrigger className="text-xs sm:text-sm" value="sessions">
+    Sessions
+  </TabsTrigger>
+</TabsList>
+
 
           {/* Propositions */}
           <TabsContent value="proposals" className="mt-6">

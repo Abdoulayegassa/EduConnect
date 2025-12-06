@@ -4,7 +4,6 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { BookOpen } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -51,23 +50,24 @@ export default function Topbar({ fullName }: TopbarProps) {
 
   return (
     <header className="border-b bg-white/80 backdrop-blur-sm">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        {/* Logo identique à la page d'accueil */}
-        <Link href="/" className="flex items-center gap-2">
-          <BookOpen className="h-7 w-7 text-blue-600" />
-          <span className="text-base sm:text-lg font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-3 sm:px-4 lg:px-8">
+        {/* Logo identique à la page d'accueil, mais un peu plus compact sur mobile */}
+        <Link href="/" className="flex items-center gap-1.5 sm:gap-2">
+          <BookOpen className="h-6 w-6 sm:h-7 sm:w-7 text-blue-600" />
+          <span className="text-sm sm:text-base md:text-lg font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             EduConnect
           </span>
         </Link>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Badges rôle : cachés sur très petit écran */}
           {isStudent && (
-            <span className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs sm:text-sm text-blue-700">
+            <span className="hidden sm:inline-flex rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs sm:text-sm text-blue-700">
               Espace étudiant
             </span>
           )}
           {isTutor && (
-            <span className="rounded-full border border-purple-100 bg-purple-50 px-3 py-1 text-xs sm:text-sm text-purple-700">
+            <span className="hidden sm:inline-flex rounded-full border border-purple-100 bg-purple-50 px-3 py-1 text-xs sm:text-sm text-purple-700">
               Espace tuteur
             </span>
           )}
